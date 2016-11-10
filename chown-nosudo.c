@@ -1,3 +1,18 @@
+// This utility changes the owner of a directory and all of its contents
+// It works on Linux and it expects to have the setuid bit or an equivalent:
+//
+// $ sudo chown root chown-nosudo
+// $ sudo chmod 4755 chown-nosudo
+//
+// or:
+//
+// $ sudo setcap cap_chown+ep chown-nsudo
+//
+// (you can use cap_chown-ep to remove it afterwards).
+//
+// The directory it operates is hardcoded, and it doesn't follow symlinks,
+// so it shouldn't open a big breach into your system security.
+
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -5,7 +20,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-// everything hardcoded for better security
 #define DEBUG
 #define DIRECTORY "/home/micheleb/Downloads"
 #define NEW_UID 1000
@@ -17,6 +31,15 @@
 #   define LOG (void*)
 #endif
 
+const int BLACKLIST_STAT[] = {
+    S_IFSOCK,
+    S_IFLNK,
+    S_IFBLK,
+    S_IFCHR,
+    S_IFIFO,
+};
+const unsigned int BLACKLIST_STAT_SIZE = sizeof(BLACKLIST_STAT) / sizeof(int);
+
 typedef void(*iterate_fn)(const char*);
 
 int iterate_dir(const char* path, iterate_fn fn) {
@@ -24,9 +47,11 @@ int iterate_dir(const char* path, iterate_fn fn) {
     DIR* dfd = NULL;
     struct stat stbuf = {0};
     char pathbuf[1024] = {0};
+    unsigned int i = 0;
+    int allowed = 1;
 
     if ((dfd = opendir(path)) == NULL) {
-        LOG("unable to open dir %s\n", path);
+        LOG("%s: unable to open dir\n", path);
         return 1;
     }
     while (dp = readdir(dfd)) {
@@ -36,13 +61,37 @@ int iterate_dir(const char* path, iterate_fn fn) {
         }
         snprintf(pathbuf, sizeof(pathbuf), "%s/%s", path, dp->d_name);
         if (stat(pathbuf, &stbuf) == -1) {
-            LOG("unable to stat file: %s\n", pathbuf);
+            LOG("%s: unable to stat file\n", pathbuf);
             continue;
         }
-        fn(pathbuf);
-        if ((stbuf.st_mode & S_IFMT) == S_IFDIR) {
+
+        // check against the blacklist
+        allowed = 1;
+        for (i = 0; i < BLACKLIST_STAT_SIZE; ++i) {
+            if ((stbuf.st_mode & S_IFMT) == BLACKLIST_STAT[i]) {
+                allowed = 0;
+                break;
+            }
+        }
+        if (!allowed) {
+            LOG("%s: skipping for security reasons, stat = %d\n", pathbuf, stbuf.st_mode);
+            continue;
+        }
+        if ((stbuf.st_mode & S_IFMT) == S_IFREG) {
+            // skip hardlinks
+            if (stbuf.st_nlink > 1) {
+                LOG("%s: skipping hardlink (%d) for security reasons\n", pathbuf, stbuf.st_nlink);
+                continue;
+            }
+            fn(pathbuf);
+        }
+        else if ((stbuf.st_mode & S_IFMT) == S_IFDIR) {
             // recurse the subdirectory
+            fn(pathbuf);
             iterate_dir(pathbuf, fn);
+        }
+        else {
+            LOG("unreachable??\n");
         }
     }
     closedir(dfd);
@@ -56,10 +105,10 @@ void print_path(const char* p) {
 void chown_path(const char* p) {
     int r;
     if (r = chown(p, NEW_UID, NEW_GID)) {
-        LOG("chown failed with errno %d\n", r);
+        LOG("%s: chown failed with errno %d\n", p, r);
     }
 }
 
 int main() {
-    return iterate_dir(DIRECTORY, chown_path);
+    return iterate_dir(DIRECTORY, print_path);
 }
