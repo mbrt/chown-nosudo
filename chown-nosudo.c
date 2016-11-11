@@ -33,6 +33,7 @@
 #else
 #   define LOG
 #endif
+#define UNUSED(x) (void)(x)
 
 const int BLACKLIST_STAT[] = {
     S_IFSOCK,
@@ -48,7 +49,8 @@ typedef int(*iterate_fn)(const char*, const struct stat* st);
 
 int is_allowed(const struct stat* st) {
     // check mode against the blacklist
-    int i, mode;
+    unsigned int i;
+    int mode;
 
     mode = st->st_mode & S_IFMT;
     for (i = 0; i < BLACKLIST_STAT_SIZE; ++i) {
@@ -69,14 +71,13 @@ int iterate_dir(const char* path, iterate_fn fn) {
     DIR* dfd = NULL;
     struct stat stbuf = {0};
     char pathbuf[1024] = {0};
-    unsigned int i = 0;
 
     if ((dfd = opendir(path)) == NULL) {
         LOG("%s: unable to open dir\n", path);
         result = 1;
         goto cleanup;
     }
-    while (dp = readdir(dfd)) {
+    while ((dp = readdir(dfd))) {
         // skip . and ..
         if (!dp->d_name || !strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")) {
             continue;
@@ -88,7 +89,7 @@ int iterate_dir(const char* path, iterate_fn fn) {
         }
         // security checks
         if (!is_allowed(&stbuf)) {
-            LOG("%s: skipping for security reasons, stat = %#o, nlink = %d\n",
+            LOG("%s: skipping for security reasons, stat = %#o, nlink = %lu\n",
                 pathbuf, stbuf.st_mode, stbuf.st_nlink);
             continue;
         }
@@ -109,6 +110,7 @@ cleanup:
 }
 
 int print_path(const char* p, const struct stat* st) {
+    UNUSED(st);
     LOG("%s\n", p);
     return 1;
 }
@@ -120,7 +122,7 @@ int chown_path(const char* p, const struct stat* st) {
         LOG("%s: unexpected uid = %#o, or gid = %#o\n", p, st->st_uid, st->st_gid);
         return 0;
     }
-    if (r = chown(p, NEW_UID, NEW_GID)) {
+    if ((r = chown(p, NEW_UID, NEW_GID))) {
         LOG("%s: chown failed with errno %d\n", p, r);
     }
     return 1;

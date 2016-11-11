@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=
+CFLAGS=-Wall -Wextra
 SRCS=chown-nosudo.c
 
 chown-nosudo: $(SRCS)
