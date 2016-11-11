@@ -6,6 +6,7 @@
 //
 // or:
 //
+// $ sudo chown root chown-nosudo
 // $ sudo setcap cap_chown+ep chown-nsudo
 //
 // (you can use cap_chown-ep to remove it afterwards).
@@ -28,7 +29,7 @@
 #ifdef DEBUG
 #   define LOG printf
 #else
-#   define LOG (void*)
+#   define LOG
 #endif
 
 const int BLACKLIST_STAT[] = {
@@ -42,17 +43,36 @@ const unsigned int BLACKLIST_STAT_SIZE = sizeof(BLACKLIST_STAT) / sizeof(int);
 
 typedef void(*iterate_fn)(const char*);
 
+
+int is_allowed(const struct stat* st) {
+    // check mode against the blacklist
+    int i, mode;
+
+    mode = st->st_mode & S_IFMT;
+    for (i = 0; i < BLACKLIST_STAT_SIZE; ++i) {
+        if (mode == BLACKLIST_STAT[i]) {
+            return 0;
+        }
+    }
+    // check if it has hardlinks
+    if (mode == S_IFREG && st->st_nlink > 1) {
+        return 0;
+    }
+    return 1;
+}
+
 int iterate_dir(const char* path, iterate_fn fn) {
+    int result = 0;
     struct dirent* dp = NULL;
     DIR* dfd = NULL;
     struct stat stbuf = {0};
     char pathbuf[1024] = {0};
     unsigned int i = 0;
-    int allowed = 1;
 
     if ((dfd = opendir(path)) == NULL) {
         LOG("%s: unable to open dir\n", path);
-        return 1;
+        result = 1;
+        goto cleanup;
     }
     while (dp = readdir(dfd)) {
         // skip . and ..
@@ -60,42 +80,28 @@ int iterate_dir(const char* path, iterate_fn fn) {
             continue;
         }
         snprintf(pathbuf, sizeof(pathbuf), "%s/%s", path, dp->d_name);
-        if (stat(pathbuf, &stbuf) == -1) {
+        if (lstat(pathbuf, &stbuf) == -1) {
             LOG("%s: unable to stat file\n", pathbuf);
             continue;
         }
-
-        // check against the blacklist
-        allowed = 1;
-        for (i = 0; i < BLACKLIST_STAT_SIZE; ++i) {
-            if ((stbuf.st_mode & S_IFMT) == BLACKLIST_STAT[i]) {
-                allowed = 0;
-                break;
-            }
-        }
-        if (!allowed) {
-            LOG("%s: skipping for security reasons, stat = %d\n", pathbuf, stbuf.st_mode);
+        // security checks
+        if (!is_allowed(&stbuf)) {
+            LOG("%s: skipping for security reasons, stat = %#o, nlink = %d\n",
+                pathbuf, stbuf.st_mode, stbuf.st_nlink);
             continue;
         }
-        if ((stbuf.st_mode & S_IFMT) == S_IFREG) {
-            // skip hardlinks
-            if (stbuf.st_nlink > 1) {
-                LOG("%s: skipping hardlink (%d) for security reasons\n", pathbuf, stbuf.st_nlink);
-                continue;
-            }
-            fn(pathbuf);
-        }
-        else if ((stbuf.st_mode & S_IFMT) == S_IFDIR) {
-            // recurse the subdirectory
-            fn(pathbuf);
+        // apply the operation
+        fn(pathbuf);
+        // recurse if it's a subdir
+        if ((stbuf.st_mode & S_IFMT) == S_IFDIR) {
             iterate_dir(pathbuf, fn);
         }
-        else {
-            LOG("unreachable??\n");
-        }
     }
-    closedir(dfd);
-    return 0;
+
+cleanup:
+    if (dfd)
+        closedir(dfd);
+    return result;
 }
 
 void print_path(const char* p) {
@@ -110,5 +116,5 @@ void chown_path(const char* p) {
 }
 
 int main() {
-    return iterate_dir(DIRECTORY, print_path);
+    return iterate_dir(DIRECTORY, chown_path);
 }
