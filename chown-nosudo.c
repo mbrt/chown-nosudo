@@ -1,5 +1,5 @@
-// This utility changes the owner of a directory and all of its contents
-// It works on Linux and it expects to have the setuid bit or an equivalent:
+// This utility changes the owner of a directory and all of its contents recursively.
+// It works on Linux and it expects to have the setuid bit or the chown cap:
 //
 // $ sudo chown root chown-nosudo
 // $ sudo chmod 4755 chown-nosudo
@@ -11,7 +11,7 @@
 //
 // (you can use cap_chown-ep to remove it afterwards).
 //
-// The directory it operates is hardcoded, and it doesn't follow symlinks,
+// It operates on a hardcoded directory, and it doesn't follow symlinks,
 // so it shouldn't open a big breach into your system security.
 
 #include <stdio.h>
